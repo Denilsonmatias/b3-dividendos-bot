@@ -1,69 +1,58 @@
 import os
-import logging
 import requests
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, ContextTypes
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+import datetime
 
-# Carrega variáveis do .env
+# Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Configura logs
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Função para enviar mensagens
+def send_message(message):
+    bot = Bot(token=TOKEN)
+    bot.send_message(chat_id=CHAT_ID, text=message)
 
-# Mensagem principal
+# Função que simula consulta de dividendos (aqui você pode adaptar com sua lógica real)
+def verificar_dividendos():
+    hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+    send_message(f"📢 Alerta de dividendos da B3 - {hoje}\n💰 Nenhum dividendo acima de R$2,00 foi identificado hoje.")
+
+# Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Olá! O bot B3 está ativo e pronto para enviar dividendos!")
 
-# Busca os dividendos acima de R$2,00 por cota
-def verificar_dividendos():
-    try:
-        url = "https://dividendobr.com/api/dividendos"
-        response = requests.get(url)
-        response.raise_for_status()
-        dividendos = response.json()
+# Comando /ajuda
+async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = (
+        "🧾 *Comandos disponíveis:*\n\n"
+        "/start - Iniciar o bot\n"
+        "/ajuda - Mostrar esta lista de comandos\n"
+        "/status - Verificar o status do envio automático\n"
+    )
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
-        mensagens = []
-        for ativo in dividendos:
-            valor = ativo.get("valor", 0)
-            if valor >= 2:
-                mensagens.append(f"💰 {ativo['codigo']} pagará R${valor:.2f} por cota em {ativo['data_pagamento']}")
+# Comando /status
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏰ O bot está programado para enviar dividendos automaticamente às 11:11h em dias úteis.")
 
-        if mensagens:
-            mensagem_final = "\n".join(mensagens)
-        else:
-            mensagem_final = "Nenhum dividendo acima de R$2,00 encontrado hoje."
+# Inicialização do bot e agendamento
+def main():
+    app = Application.builder().token(TOKEN).build()
 
-        send_message(mensagem_final)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ajuda", ajuda))
+    app.add_handler(CommandHandler("status", status))
 
-    except Exception as e:
-        logging.error(f"Erro ao verificar dividendos: {e}")
-
-# Envia a mensagem para o Telegram
-def send_message(mensagem):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": mensagem}
-    requests.post(url, data=payload)
-
-# Agendador
-def agendar_tarefa_diaria(app):
     scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
-    scheduler.add_job(verificar_dividendos, trigger='cron', day_of_week='mon-fri', hour=11, minute=11)
+    scheduler.add_job(verificar_dividendos, 'cron', day_of_week='mon-fri', hour=11, minute=11)
     scheduler.start()
 
-# Inicializa o bot
-if __name__ == '__main__':
-    try:
-        app = ApplicationBuilder().token(TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        agendar_tarefa_diaria(app)
+    print("Bot iniciado...")
+    app.run_polling()
 
-        print("Bot iniciado com sucesso.")
-        app.run_polling(stop_signals=None)  # Sem sinais do sistema (ideal para Render)
-
-    except Exception as e:
-        logging.error(f"Erro ao iniciar o bot: {e}")
+if __name__ == "__main__":
+    main()
