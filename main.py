@@ -1,59 +1,84 @@
-import logging
 import os
+import logging
+import asyncio
 import requests
+from bs4 import BeautifulSoup
 from telegram import Bot
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from datetime import datetime
-import pytz
 
-# Carrega variáveis do arquivo .env
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# Configura logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger()
+if not TOKEN or not CHAT_ID:
+    raise ValueError("Você deve configurar TOKEN e CHAT_ID nas variáveis de ambiente.")
 
-# Instancia o bot
 bot = Bot(token=TOKEN)
 
-def enviar_dividendos():
+# Função para buscar dividendos reais de FIIs do FundsExplorer
+def buscar_dividendos():
+    url = "https://www.fundsexplorer.com.br/ranking"
+    headers = {"User-Agent": "Mozilla/5.0"}
+
     try:
-        logger.info("Verificando dividendos...")
+        resposta = requests.get(url, headers=headers)
+        soup = BeautifulSoup(resposta.content, "html.parser")
+        tabela = soup.find("table")
 
-        # Aqui é um exemplo fixo, você pode trocar pelo web scraping real depois
-        mensagem = "📈 Ação XPTO3 vai pagar R$ 2,34 por ação em 30/06/2025."
+        dividendos_altos = []
 
-        bot.send_message(chat_id=CHAT_ID, text=mensagem)
-        logger.info("Mensagem enviada com sucesso.")
+        if tabela:
+            linhas = tabela.find_all("tr")[1:]  # pula o cabeçalho
+            for linha in linhas:
+                colunas = linha.find_all("td")
+                if len(colunas) >= 10:
+                    codigo = colunas[0].text.strip()
+                    dy = colunas[5].text.strip().replace("R$", "").replace(",", ".")
+                    try:
+                        dy_float = float(dy)
+                        if dy_float >= 2.0:
+                            dividendos_altos.append(f"{codigo}: R$ {dy_float:.2f}")
+                    except ValueError:
+                        continue
 
+        return dividendos_altos
     except Exception as e:
-        logger.error(f"Erro ao enviar dividendos: {e}")
+        logging.error(f"Erro ao buscar dados: {e}")
+        return []
 
-# Agenda a execução para 11:11 (horário de Brasília)
-def agendar_envio():
-    fuso = pytz.timezone("America/Sao_Paulo")
-    scheduler = BackgroundScheduler(timezone=fuso)
+# Enviar mensagem com os dividendos
+async def enviar_dividendos():
+    logging.info("Verificando dividendos...")
 
-    # Segunda a sexta (dias úteis), às 11:11h
-    scheduler.add_job(enviar_dividendos, 'cron', day_of_week='mon-fri', hour=11, minute=11)
+    dividendos = buscar_dividendos()
+
+    if dividendos:
+        mensagem = "💸 FIIs com dividendos acima de R$ 2,00:\n\n" + "\n".join(dividendos)
+    else:
+        mensagem = "Nenhum FII com dividendos acima de R$ 2,00 foi encontrado hoje."
+
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=mensagem)
+        logging.info("Mensagem enviada com sucesso.")
+    except Exception as e:
+        logging.error(f"Erro ao enviar mensagem: {e}")
+
+# Agendar tarefa
+async def main():
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(enviar_dividendos, 'cron', hour=11, minute=11)
     scheduler.start()
 
-    logger.info("Bot agendado para enviar dividendos diariamente às 11:11.")
+    logging.info("Bot agendado para enviar dividendos diariamente às 11:11.")
+    logging.info("Bot iniciado. Aguardando tarefas agendadas...")
 
+    while True:
+        await asyncio.sleep(60)
+
+# Iniciar
 if __name__ == "__main__":
-    try:
-        enviar_dividendos()  # opcional: envia na inicialização
-        agendar_envio()
-        logger.info("Bot iniciado. Aguardando tarefas agendadas...")
-
-        # Mantém o bot rodando
-        import time
-        while True:
-            time.sleep(60)
-
-    except Exception as e:
-        logger.error(f"Erro ao iniciar o bot: {e}")
+    asyncio.run(main())
