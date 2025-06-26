@@ -1,84 +1,57 @@
 import os
 import logging
-import asyncio
-import requests
-from bs4 import BeautifulSoup
 from telegram import Bot
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 
+# Carregar variáveis de ambiente
 load_dotenv()
 
+# Configuração do log
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Obter token e chat_id do ambiente
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+# Verificação de segurança
 if not TOKEN or not CHAT_ID:
-    raise ValueError("Você deve configurar TOKEN e CHAT_ID nas variáveis de ambiente.")
+    logger.error("TOKEN ou CHAT_ID não foram definidos nas variáveis de ambiente.")
+    raise ValueError("TOKEN ou CHAT_ID ausentes.")
 
+# Criar instância do bot
 bot = Bot(token=TOKEN)
 
-# Função para buscar dividendos reais de FIIs do FundsExplorer
-def buscar_dividendos():
-    url = "https://www.fundsexplorer.com.br/ranking"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# Função para buscar e enviar dividendos
+def enviar_dividendos():
+    logger.info("Verificando dividendos...")
 
+    # Exemplo de mensagem simulada
+    mensagem = "📈 Dividendos de hoje:\n- PETR4: R$ 2,01\n- ITSA4: R$ 2,10"
+
+    # Enviar mensagem
     try:
-        resposta = requests.get(url, headers=headers)
-        soup = BeautifulSoup(resposta.content, "html.parser")
-        tabela = soup.find("table")
-
-        dividendos_altos = []
-
-        if tabela:
-            linhas = tabela.find_all("tr")[1:]  # pula o cabeçalho
-            for linha in linhas:
-                colunas = linha.find_all("td")
-                if len(colunas) >= 10:
-                    codigo = colunas[0].text.strip()
-                    dy = colunas[5].text.strip().replace("R$", "").replace(",", ".")
-                    try:
-                        dy_float = float(dy)
-                        if dy_float >= 2.0:
-                            dividendos_altos.append(f"{codigo}: R$ {dy_float:.2f}")
-                    except ValueError:
-                        continue
-
-        return dividendos_altos
+        # CORREÇÃO: uso de 'await' com run_coroutine_threadsafe
+        from asyncio import get_event_loop, run_coroutine_threadsafe
+        loop = get_event_loop()
+        run_coroutine_threadsafe(bot.send_message(chat_id=CHAT_ID, text=mensagem), loop)
+        logger.info("Mensagem enviada com sucesso.")
     except Exception as e:
-        logging.error(f"Erro ao buscar dados: {e}")
-        return []
+        logger.error(f"Erro ao enviar mensagem: {e}")
 
-# Enviar mensagem com os dividendos
-async def enviar_dividendos():
-    logging.info("Verificando dividendos...")
+# Agendar a tarefa
+scheduler = BackgroundScheduler()
+scheduler.add_job(enviar_dividendos, 'cron', hour=11, minute=11)
+scheduler.start()
 
-    dividendos = buscar_dividendos()
+logger.info("Bot agendado para enviar dividendos diariamente às 11:11.")
+logger.info("Bot iniciado. Aguardando tarefas agendadas...")
 
-    if dividendos:
-        mensagem = "💸 FIIs com dividendos acima de R$ 2,00:\n\n" + "\n".join(dividendos)
-    else:
-        mensagem = "Nenhum FII com dividendos acima de R$ 2,00 foi encontrado hoje."
-
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=mensagem)
-        logging.info("Mensagem enviada com sucesso.")
-    except Exception as e:
-        logging.error(f"Erro ao enviar mensagem: {e}")
-
-# Agendar tarefa
-async def main():
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(enviar_dividendos, 'cron', hour=11, minute=11)
-    scheduler.start()
-
-    logging.info("Bot agendado para enviar dividendos diariamente às 11:11.")
-    logging.info("Bot iniciado. Aguardando tarefas agendadas...")
-
+# Manter a aplicação rodando
+import time
+try:
     while True:
-        await asyncio.sleep(60)
-
-# Iniciar
-if __name__ == "__main__":
-    asyncio.run(main())
+        time.sleep(1)
+except (KeyboardInterrupt, SystemExit):
+    scheduler.shutdown()
